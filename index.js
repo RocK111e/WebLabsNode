@@ -1,16 +1,15 @@
-const http = require('http');
-const port = 3000;
+const express = require('express');
+const app = express();
 
-const server = http.createServer((req, res) => {
-    if (req.url === '/' && req.method === 'GET') {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end('Hello, Node.js Backend with pnpm!');
-    } else {
-        res.writeHead(404, { 'Content-Type': 'application/json' });
-        res.end('Not Found');
-    }
+app.get('/', (req, res) => {
+    res.send('Welcome to the Home Page!');
 });
 
-server.listen(port, () => {
-    console.log(`Server running at http://localhost:${port}`);
+app.get('/about', (req, res) => {
+    res.send('About Page');
+});
+
+const PORT = 3000;
+app.listen(PORT, () => {
+    console.log(`Server running at http://localhost:${PORT}/`);
 });
