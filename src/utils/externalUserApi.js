@@ -1,7 +1,7 @@
 // src/utils/externalUserApi.js
 
 // Base URL for the external user API
-const USER_API_BASE_URL = 'http://webphp.local'; // Your actual base URL
+const USER_API_BASE_URL = 'http://webphp.local/api/app.php/'; // Your actual base URL
 
 // Simple in-memory cache for user details to reduce API calls
 // In a production environment, consider a more robust caching solution (e.g., Redis)
