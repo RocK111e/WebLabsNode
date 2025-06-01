@@ -1,4 +1,4 @@
-// src/database/database.js
+// src/database/database.js (Node.js Backend)
 const mongoose = require('mongoose');
 const { Message, Chat } = require('./schemas');
 
@@ -27,7 +27,7 @@ class MongoDB {
       const newMessage = await Message.create({
         chatId,
         senderExternalId,
-        username, // This is the fetched username
+        username,
         message: messageText
       });
       console.log('Message saved:', newMessage);
@@ -47,33 +47,62 @@ class MongoDB {
                                     .sort({ createdAt: -1 })
                                     .skip(skip)
                                     .limit(limit)
-                                    .lean();
-      return { success: true, data: messages.reverse() };
+                                    .lean(); // Use .lean() for performance if not modifying docs
+      return { success: true, data: messages.reverse() }; // Show oldest first in batch
     } catch (err) {
       console.error('Error retrieving messages for chat:', err.message);
       return { success: false, error: err.message, data: [] };
     }
   }
 
-  // --- Chat Methods ---
-  async createChat(externalParticipantIds) {
+  // --- Chat Methods (Updated for Group Chats) ---
+  async createChat(externalParticipantIds, chatName = null, isGroup = false, creatorExternalId = null) {
     try {
       if (!Array.isArray(externalParticipantIds) || externalParticipantIds.length === 0) {
           return { success: false, error: 'Participant IDs must be a non-empty array.' };
       }
-      const uniqueIds = [...new Set(externalParticipantIds)];
-      if (uniqueIds.length !== externalParticipantIds.length) {
-          return { success: false, error: 'Participant IDs must be unique within a chat.' };
+      // Ensure IDs are unique for the participants list. Frontend should ideally do this.
+      const uniqueIds = [...new Set(externalParticipantIds.map(id => id.toString().trim()))];
+
+      if (isGroup && (!chatName || chatName.trim() === '')) {
+          return { success: false, error: 'Group chats must have a name.' };
       }
-      const newChat = await Chat.create({ participantExternalIds: uniqueIds });
+      if (isGroup && uniqueIds.length < 1) { // Group of 1 for "notes to self" is allowed if named
+           return { success: false, error: 'Group chats require at least one participant.' };
+      }
+      if (!isGroup && uniqueIds.length !== 2) {
+          return { success: false, error: 'One-on-one chats require exactly two distinct participants.' };
+      }
+
+      const chatData = {
+          participantExternalIds: uniqueIds,
+          isGroupChat: isGroup,
+          chatName: (isGroup && chatName) ? chatName.trim() : null,
+          adminExternalId: (isGroup && creatorExternalId) ? creatorExternalId.toString().trim() : null
+      };
+
+      // For 1-on-1 chats, check if a chat already exists between these two participants
+      // to prevent duplicate 1-on-1 chat rooms.
+      if (!isGroup && uniqueIds.length === 2) {
+          const existingChat = await Chat.findOne({
+              isGroupChat: false,
+              participantExternalIds: { $all: uniqueIds, $size: 2 } // Order doesn't matter
+          });
+          if (existingChat) {
+              console.log('Found existing 1-on-1 chat:', existingChat._id);
+              return { success: true, data: existingChat, existed: true };
+          }
+      }
+
+      const newChat = await Chat.create(chatData);
       console.log('Chat created:', newChat);
-      return { success: true, data: newChat };
+      return { success: true, data: newChat, existed: false };
     } catch (err) {
       console.error('Error creating chat:', err.message);
       if (err.name === 'ValidationError') {
         return { success: false, error: err.message };
       }
-      return { success: false, error: 'Server error creating chat.' };
+      return { success: false, error: 'Server error while creating chat.' };
     }
   }
 
@@ -82,8 +111,8 @@ class MongoDB {
       if (typeof externalUserId !== 'string' || externalUserId.trim() === '') {
         return { success: false, error: 'Invalid external User ID format.', data: [] };
       }
-      const chats = await Chat.find({ participantExternalIds: externalUserId })
-                              .sort({ updatedAt: -1 })
+      const chats = await Chat.find({ participantExternalIds: externalUserId.trim() })
+                              .sort({ updatedAt: -1 }) // Show most recently active chats first
                               .lean();
       return { success: true, data: chats };
     } catch (err) {

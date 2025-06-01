@@ -1,4 +1,4 @@
-// src/database/schemas.js
+// src/database/schemas.js (Node.js Backend)
 const mongoose = require('mongoose');
 
 // --- Message Schema ---
@@ -32,23 +32,40 @@ const messageSchema = new mongoose.Schema({
 });
 const MessageModel = mongoose.model('Message', messageSchema);
 
-// --- Chat Schema ---
+// --- Chat Schema (Updated for Group Chats) ---
 const chatSchema = new mongoose.Schema({
+    chatName: { // Custom name for the chat, especially for groups
+        type: String,
+        trim: true,
+        maxlength: 100,
+        default: null // Null for 1-on-1 chats where name is derived by frontend/controller
+    },
+    isGroupChat: {
+        type: Boolean,
+        default: false
+    },
     participantExternalIds: [{
         type: String,
-        required: [true, 'External participant ID is required'],
-        trim: true,
-        validate: {
-            validator: function(v) {
-                return v && v.length > 0;
-            },
-            message: props => `${props.value} is not a valid external participant ID!`
-        }
+        required: true,
+        trim: true
     }],
+    adminExternalId: { // Optional: ID of the user who created/administers the group
+        type: String,
+        trim: true,
+        default: null
+    },
+    // lastMessage: { // Optional: For displaying last message in chat list preview
+    //   text: String,
+    //   senderUsername: String, // Fetched name of the sender of the last message
+    //   timestamp: Date
+    // }
 }, {
-    timestamps: true
+    timestamps: true // Automatically adds createdAt and updatedAt fields
 });
-chatSchema.index({ participantExternalIds: 1 });
+
+chatSchema.index({ participantExternalIds: 1 }); // Efficiently find chats by participant
+chatSchema.index({ chatName: 'text' }); // For text search on chat names if needed later
+
 const ChatModel = mongoose.model('Chat', chatSchema);
 
 // --- Exports ---
