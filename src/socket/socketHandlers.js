@@ -44,74 +44,73 @@ function initializeSocketIO(io, dbInstance) {
       }
     });
 
+   // src/socket/socketHandlers.js
+// ... (imports and other parts)
+
     socket.on('sendMessage', async (data) => {
       const { chatId, senderExternalId, message } = data;
-      const tokenForPHP = socket.jwtToken;
-
-      if (!tokenForPHP) {
-          console.warn(`Socket ${socket.id} sendMessage: Missing JWT for user ${senderExternalId}.`);
-          socket.emit('messageError', { chatId, error: 'Authentication token missing. Cannot send message.' });
-          return;
-      }
-      if (!chatId || !mongoose.Types.ObjectId.isValid(chatId) || !senderExternalId || !message || typeof message !== 'string' || message.trim() === '') {
-          console.warn(`Socket ${socket.id} sendMessage: Invalid data. ChatID: ${chatId}, Sender: ${senderExternalId}, Msg provided: ${!!message}`);
-          socket.emit('messageError', { chatId, error: 'Invalid message data. All fields (chatId, senderExternalId, message) are required and message cannot be empty.' });
-          return;
-      }
-      // Ensure senderExternalId from data matches the authenticated user on the socket
-      if (socket.externalUserId && senderExternalId !== socket.externalUserId) {
-        console.warn(`Socket ${socket.id} sendMessage: senderExternalId ${senderExternalId} in message data does not match authenticated user ${socket.externalUserId}.`);
-        socket.emit('messageError', { chatId, error: 'Sender ID mismatch with authenticated user.' });
-        return;
-      }
+      // ... (initial checks as before) ...
 
       try {
-        const userDetails = await fetchUserDetails(senderExternalId, tokenForPHP);
-        const senderUsername = userDetails && userDetails.name ? userDetails.name : `User (${senderExternalId.substring(0,4)})`;
-        
-        const result = await dbInstance.post_message(chatId, senderExternalId, senderUsername, message.trim());
+        // ... (fetch sender userDetails, post_message as before) ...
         
         if (result.success && result.data) {
           const savedMessage = result.data;
-          io.to(chatId.toString()).emit('newMessage', savedMessage); // Broadcast to all in chat room
+          io.to(chatId.toString()).emit('newMessage', savedMessage);
           console.log(`Message sent by ${socket.id} to room ${chatId}:`, savedMessage.message);
 
           // --- Notification Logic ---
-          const chatDetails = await dbInstance.getChatById(chatId.toString());
-          if (chatDetails.success && chatDetails.data) {
-            const participants = chatDetails.data.participantExternalIds || [];
-            const chatName = chatDetails.data.chatName || (participants.length === 2 ? `Chat with ${senderUsername}` : "Group Chat"); // Basic naming for 1-on-1
+          const chatDetailsResult = await dbInstance.getChatById(chatId.toString()); // Fetch chat details
+          if (chatDetailsResult.success && chatDetailsResult.data) {
+            const chat = chatDetailsResult.data;
+            const participants = chat.participantExternalIds || [];
+            
+            // Determine chatName for notification (could be more sophisticated for 1-on-1)
+            let effectiveChatName = chat.chatName;
+            if (!effectiveChatName && participants.length === 2) {
+                // For 1-on-1, try to get the other user's name if senderUsername is available
+                const otherParticipantId = participants.find(pId => pId.toString() !== senderExternalId.toString());
+                if (otherParticipantId) {
+                    // To get the other user's actual name for the notification, you might need
+                    // to fetch their details IF you don't already have it from senderUsername context.
+                    // This can get complex here quickly. For simplicity, we use senderUsername or generic.
+                    effectiveChatName = `Chat with ${senderUsername}`; 
+                } else {
+                    effectiveChatName = "Direct Message";
+                }
+            } else if (!effectiveChatName) {
+                effectiveChatName = "Group Chat";
+            }
+
+            // Determine if it's a group for notification purposes
+            const isEffectivelyGroupForNotification = !!chat.chatName || participants.length > 2;
             
             participants.forEach(participantId => {
-              if (participantId.toString() !== senderExternalId.toString()) { // Don't notify the sender
+              if (participantId.toString() !== senderExternalId.toString()) {
                 const userSpecificRoom = `user_${participantId}`;
                 const notificationData = {
                   chatId: chatId.toString(),
-                  chatName: chatName,
+                  chatName: effectiveChatName,
                   senderExternalId: senderExternalId.toString(),
-                  senderName: senderUsername,
+                  senderName: senderUsername, // Username of the message sender
                   messageSnippet: savedMessage.message.substring(0, 50) + (savedMessage.message.length > 50 ? '...' : ''),
                   timestamp: savedMessage.createdAt,
-                  isGroupChat: chatDetails.data.isGroupChat,
+                  isGroupChat: isEffectivelyGroupForNotification, // Based on derived logic
+                  messageId: savedMessage._id.toString()
                 };
                 io.to(userSpecificRoom).emit('newMessageNotification', notificationData);
                 console.log(`Sent notification to ${userSpecificRoom} for message in chat ${chatId}`);
               }
             });
           } else {
-            console.warn(`Could not fetch chat details for ${chatId} to send notifications. Error: ${chatDetails.error}`);
+            console.warn(`Could not fetch chat details for ${chatId} to send notifications. Error: ${chatDetailsResult.error}`);
           }
           // --- End Notification Logic ---
-
-        } else {
-          console.error(`Socket ${socket.id} sendMessage: Failed to save message for chat ${chatId}. Error: ${result.error}`);
-          socket.emit('messageError', { chatId, error: result.error || 'Failed to save message.' });
-        }
-      } catch (error) {
-        console.error(`Socket ${socket.id} sendMessage: Server error for chat ${chatId}. Error: ${error.message}`, error.stack);
-        socket.emit('messageError', { chatId, error: 'Server error sending message.' });
-      }
+        } else { /* ... error handling ... */ }
+      } catch (error) { /* ... error handling ... */ }
     });
+
+// ... (rest of socketHandlers.js)
 
     socket.on('typing', async (data) => {
       const { chatId, isTyping, externalUserId } = data;

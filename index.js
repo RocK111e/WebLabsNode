@@ -43,67 +43,66 @@ const CC = new ChatController();
 
 app.get('/', (req, res) => res.status(200).send('Chat API Welcome!'));
 
+// index.js
+// ... (imports and other setup)
+
 app.post('/messages', async (req, res) => {
-    if (!req.jwtToken) return res.status(401).json({ error: "Token required for posting message." });
-    
-    // Optional: Add server-side validation that req.body.senderExternalId matches an ID derived from req.jwtToken
-    // This depends on how your JWTs are structured and if they contain the user's external ID.
-    // For example:
-    // const decodedToken = yourJwtDecodingFunction(req.jwtToken);
-    // if (decodedToken && decodedToken.externalId !== req.body.senderExternalId) {
-    //    return res.status(403).json({ error: "Sender ID does not match authenticated user." });
-    // }
+    // ... (auth check as per your setup) ...
+    // const { senderExternalId: reqSenderId } = req.body; // from request body
 
     const result = await MC.post_message_http(req.body, dbInstance, req.jwtToken);
     
     if (result[0] === 201 && result[1] && result[1].success && result[1].data) {
         const savedMessage = result[1].data;
         const chatIdStr = savedMessage.chatId ? savedMessage.chatId.toString() : null;
-        const senderExternalId = savedMessage.senderExternalId;
+        const messageSenderExternalId = savedMessage.senderExternalId; // ID of who sent the message
 
         if (chatIdStr) {
             io.to(chatIdStr).emit('newMessage', savedMessage);
-            console.log(`Message from HTTP POST (user: ${senderExternalId}) broadcasted to room ${chatIdStr}`);
+            // ... (log) ...
 
-            // --- Notification Logic for HTTP POST ---
+            // --- Notification Logic (Adapted) ---
             try {
-                const chatDetails = await dbInstance.getChatById(chatIdStr);
-                if (chatDetails.success && chatDetails.data) {
-                    const participants = chatDetails.data.participantExternalIds || [];
-                    const senderUsername = savedMessage.username || `User (${senderExternalId.substring(0,4)})`; // Use username from saved message
-                    const chatName = chatDetails.data.chatName || (participants.length === 2 ? `Chat with ${senderUsername}` : "Group Chat");
+                const chatDetailsResult = await dbInstance.getChatById(chatIdStr);
+                if (chatDetailsResult.success && chatDetailsResult.data) {
+                    const chat = chatDetailsResult.data;
+                    const participants = chat.participantExternalIds || [];
+                    const senderUsername = savedMessage.username || `User (${messageSenderExternalId.substring(0,4)})`;
+                    
+                    let effectiveChatName = chat.chatName;
+                    if (!effectiveChatName && participants.length === 2) {
+                        effectiveChatName = `Chat with ${senderUsername}`;
+                    } else if (!effectiveChatName) {
+                        effectiveChatName = "Group Chat";
+                    }
+                    const isEffectivelyGroupForNotification = !!chat.chatName || participants.length > 2;
 
                     participants.forEach(participantId => {
-                        if (participantId.toString() !== senderExternalId.toString()) {
+                        if (participantId.toString() !== messageSenderExternalId.toString()) {
                             const userSpecificRoom = `user_${participantId}`;
                             const notificationData = {
                                 chatId: chatIdStr,
-                                chatName: chatName,
-                                senderExternalId: senderExternalId.toString(),
+                                chatName: effectiveChatName,
+                                senderExternalId: messageSenderExternalId.toString(),
                                 senderName: senderUsername,
                                 messageSnippet: savedMessage.message.substring(0, 50) + (savedMessage.message.length > 50 ? '...' : ''),
                                 timestamp: savedMessage.createdAt,
-                                isGroupChat: chatDetails.data.isGroupChat,
+                                isGroupChat: isEffectivelyGroupForNotification,
+                                messageId: savedMessage._id.toString()
                             };
                             io.to(userSpecificRoom).emit('newMessageNotification', notificationData);
-                            console.log(`Sent notification via HTTP route to ${userSpecificRoom} for message in chat ${chatIdStr}`);
+                            // ... (log) ...
                         }
                     });
-                } else {
-                    console.warn(`Could not fetch chat details for ${chatIdStr} (from HTTP POST) to send notifications. Error: ${chatDetails.error}`);
-                }
-            } catch (notificationError) {
-                 console.error(`Error sending notifications from HTTP POST for chat ${chatIdStr}:`, notificationError);
-            }
+                } else { /* ... log warning ... */ }
+            } catch (notificationError) { /* ... log error ... */ }
             // --- End Notification Logic ---
-        } else {
-            console.warn("Message saved via HTTP POST, but chatId was missing in the response data. Cannot broadcast or notify via socket.");
-        }
-    } else if (result[1] && result[1].error) {
-        console.warn(`Attempt to post message via HTTP by ${req.body.senderExternalId} failed. Controller status ${result[0]}, Error: ${result[1].error || (result[1].details ? JSON.stringify(result[1].details) : 'Unknown error')}`);
-    }
+        } else { /* ... log warning ... */ }
+    } else { /* ... log warning ... */ }
     res.status(result[0]).json(result[1]);
 });
+
+// ... (rest of index.js)
 
 app.get('/chats/:chatId/messages', async (req, res) => {
     const { chatId } = req.params;

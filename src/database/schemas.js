@@ -5,7 +5,7 @@ const mongoose = require('mongoose');
 const messageSchema = new mongoose.Schema({
   chatId: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'Chat',
+    ref: 'Chat', // Should match the model name 'Chat'
     required: true,
     index: true
   },
@@ -16,7 +16,7 @@ const messageSchema = new mongoose.Schema({
   },
   username: { // Display name of the sender, fetched from external API
     type: String,
-    required: false,
+    required: false, // Keep as false, might not always be available immediately
     trim: true,
     maxlength: [100, 'Username cannot exceed 100 characters']
   },
@@ -28,43 +28,52 @@ const messageSchema = new mongoose.Schema({
     maxlength: [1000, 'Message cannot exceed 1000 characters']
   }
 }, {
-  timestamps: true
+  timestamps: true // Adds createdAt and updatedAt
 });
+// Ensure index for faster querying of messages by chat and time
+messageSchema.index({ chatId: 1, createdAt: -1 });
+
 const MessageModel = mongoose.model('Message', messageSchema);
 
-// --- Chat Schema (Updated for Group Chats) ---
+// --- Chat Schema (Simplified for "Only Group Chats" - though 1-on-1 is a group of 2) ---
 const chatSchema = new mongoose.Schema({
-    chatName: { // Custom name for the chat, especially for groups
+    chatName: { // Custom name for the chat. Can be null for 1-on-1 if frontend derives name.
         type: String,
         trim: true,
         maxlength: 100,
-        default: null // Null for 1-on-1 chats where name is derived by frontend/controller
+        default: null
     },
-    isGroupChat: {
-        type: Boolean,
-        default: false
-    },
-    participantExternalIds: [{
+    participantExternalIds: [{ // Array of external user IDs participating in the chat
         type: String,
         required: true,
         trim: true
     }],
-    adminExternalId: { // Optional: ID of the user who created/administers the group
-        type: String,
-        trim: true,
-        default: null
-    },
-    // lastMessage: { // Optional: For displaying last message in chat list preview
+    // lastMessage could be added here later for chat list previews
+    // lastMessage: {
     //   text: String,
-    //   senderUsername: String, // Fetched name of the sender of the last message
+    //   senderUsername: String,
+    //   senderExternalId: String,
     //   timestamp: Date
     // }
 }, {
     timestamps: true // Automatically adds createdAt and updatedAt fields
 });
 
-chatSchema.index({ participantExternalIds: 1 }); // Efficiently find chats by participant
-chatSchema.index({ chatName: 'text' }); // For text search on chat names if needed later
+// Index to efficiently find chats by participant(s)
+chatSchema.index({ participantExternalIds: 1 });
+// Optional: Index for searching chats by name if that's a feature
+chatSchema.index({ chatName: 'text' });
+
+// Pre-save hook to ensure participant IDs are sorted for 1-on-1 chat uniqueness check if needed,
+// though with the new model, this might be less critical unless you strictly want to prevent
+// duplicate 2-participant chats regardless of chatName.
+// chatSchema.pre('save', function(next) {
+//   if (this.participantExternalIds && this.participantExternalIds.length === 2 && !this.chatName) {
+//     this.participantExternalIds.sort(); // Sort to ensure consistent order for uniqueness check
+//   }
+//   next();
+// });
+
 
 const ChatModel = mongoose.model('Chat', chatSchema);
 
