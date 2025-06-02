@@ -1,4 +1,4 @@
-// src/database/database.js (Node.js Backend)
+// src/database/database.js
 const mongoose = require('mongoose');
 const { Message, Chat } = require('./schemas');
 
@@ -118,6 +118,23 @@ class MongoDB {
     } catch (err) {
       console.error('Error retrieving chats for external user ID:', err.message);
       return { success: false, error: err.message, data: [] };
+    }
+  }
+
+  // --- NEW METHOD for fetching a single chat by ID ---
+  async getChatById(chatId) {
+    try {
+      if (!mongoose.Types.ObjectId.isValid(chatId)) {
+        return { success: false, error: 'Invalid chatId format.', data: null };
+      }
+      const chat = await Chat.findById(chatId).lean();
+      if (!chat) {
+        return { success: false, error: 'Chat not found.', data: null };
+      }
+      return { success: true, data: chat };
+    } catch (err) {
+      console.error(`Error retrieving chat by ID ${chatId}:`, err.message);
+      return { success: false, error: `Server error retrieving chat: ${err.message}`, data: null };
     }
   }
 }

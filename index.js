@@ -2,18 +2,16 @@
 const express = require('express');
 const http = require('http');
 const { Server } = require("socket.io");
-const mongoose = require('mongoose'); // Still needed for ObjectId checks in routes and graceful shutdown
+const mongoose = require('mongoose');
 const cors = require('cors');
 
 const MongoDB = require('./src/database/database');
 const MessageController = require('./src/controllers/messages');
 const ChatController = require('./src/controllers/chats');
-// Note: fetchUserDetails is now primarily used by socketHandlers and controllers,
-// but it's good to be aware of its existence here if direct use was ever needed.
-// const { fetchUserDetails } = require('./src/utils/externalUserApi'); 
-require('./src/logger/logger.js'); // Assuming this sets up a global logger
+// fetchUserDetails is used by controllers and socket handlers, not directly here usually
+// const { fetchUserDetails } = require('./src/utils/externalUserApi');
+require('./src/logger/logger.js');
 
-// Import new modules
 const initializeSocketIO = require('./src/socket/socketHandlers');
 const { extractJwt } = require('./src/middleware/authMiddleware');
 const { routeNotFoundHandler, globalErrorHandler } = require('./src/middleware/errorHandlers');
@@ -25,7 +23,6 @@ const io = new Server(server, {
   cors: { origin: "*", methods: ["GET", "POST"] }
 });
 
-// --- Global Middleware ---
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -36,15 +33,11 @@ const corsOptions = {
   optionsSuccessStatus: 204
 };
 app.use(cors(corsOptions));
-app.use(extractJwt); // Apply JWT extraction globally
+app.use(extractJwt);
 
-// --- Database Initialization ---
-const dbInstance = new MongoDB(); // Connects to DB via its constructor
+const dbInstance = new MongoDB();
+initializeSocketIO(io, dbInstance);
 
-// --- Socket.IO Initialization ---
-initializeSocketIO(io, dbInstance); // Pass io instance and dbInstance
-
-// --- REST API Routes ---
 const MC = new MessageController();
 const CC = new ChatController();
 
@@ -53,17 +46,58 @@ app.get('/', (req, res) => res.status(200).send('Chat API Welcome!'));
 app.post('/messages', async (req, res) => {
     if (!req.jwtToken) return res.status(401).json({ error: "Token required for posting message." });
     
+    // Optional: Add server-side validation that req.body.senderExternalId matches an ID derived from req.jwtToken
+    // This depends on how your JWTs are structured and if they contain the user's external ID.
+    // For example:
+    // const decodedToken = yourJwtDecodingFunction(req.jwtToken);
+    // if (decodedToken && decodedToken.externalId !== req.body.senderExternalId) {
+    //    return res.status(403).json({ error: "Sender ID does not match authenticated user." });
+    // }
+
     const result = await MC.post_message_http(req.body, dbInstance, req.jwtToken);
     
     if (result[0] === 201 && result[1] && result[1].success && result[1].data) {
         const savedMessage = result[1].data;
         const chatIdStr = savedMessage.chatId ? savedMessage.chatId.toString() : null;
+        const senderExternalId = savedMessage.senderExternalId;
 
         if (chatIdStr) {
             io.to(chatIdStr).emit('newMessage', savedMessage);
-            console.log(`Message from HTTP POST (user: ${savedMessage.senderExternalId}) broadcasted to room ${chatIdStr}`);
+            console.log(`Message from HTTP POST (user: ${senderExternalId}) broadcasted to room ${chatIdStr}`);
+
+            // --- Notification Logic for HTTP POST ---
+            try {
+                const chatDetails = await dbInstance.getChatById(chatIdStr);
+                if (chatDetails.success && chatDetails.data) {
+                    const participants = chatDetails.data.participantExternalIds || [];
+                    const senderUsername = savedMessage.username || `User (${senderExternalId.substring(0,4)})`; // Use username from saved message
+                    const chatName = chatDetails.data.chatName || (participants.length === 2 ? `Chat with ${senderUsername}` : "Group Chat");
+
+                    participants.forEach(participantId => {
+                        if (participantId.toString() !== senderExternalId.toString()) {
+                            const userSpecificRoom = `user_${participantId}`;
+                            const notificationData = {
+                                chatId: chatIdStr,
+                                chatName: chatName,
+                                senderExternalId: senderExternalId.toString(),
+                                senderName: senderUsername,
+                                messageSnippet: savedMessage.message.substring(0, 50) + (savedMessage.message.length > 50 ? '...' : ''),
+                                timestamp: savedMessage.createdAt,
+                                isGroupChat: chatDetails.data.isGroupChat,
+                            };
+                            io.to(userSpecificRoom).emit('newMessageNotification', notificationData);
+                            console.log(`Sent notification via HTTP route to ${userSpecificRoom} for message in chat ${chatIdStr}`);
+                        }
+                    });
+                } else {
+                    console.warn(`Could not fetch chat details for ${chatIdStr} (from HTTP POST) to send notifications. Error: ${chatDetails.error}`);
+                }
+            } catch (notificationError) {
+                 console.error(`Error sending notifications from HTTP POST for chat ${chatIdStr}:`, notificationError);
+            }
+            // --- End Notification Logic ---
         } else {
-            console.warn("Message saved via HTTP POST, but chatId was missing in the response data. Cannot broadcast via socket.");
+            console.warn("Message saved via HTTP POST, but chatId was missing in the response data. Cannot broadcast or notify via socket.");
         }
     } else if (result[1] && result[1].error) {
         console.warn(`Attempt to post message via HTTP by ${req.body.senderExternalId} failed. Controller status ${result[0]}, Error: ${result[1].error || (result[1].details ? JSON.stringify(result[1].details) : 'Unknown error')}`);
@@ -92,19 +126,23 @@ app.get('/chats/user/:externalUserId', async (req, res) => {
     const { externalUserId } = req.params;
     if (!req.jwtToken) return res.status(401).json({ error: "Token required for fetching user chats." });
     
+    // Optional: Add validation that externalUserId matches the ID in req.jwtToken if this is a protected route
+    // for a user to only fetch *their own* chats.
+    // const decodedToken = yourJwtDecodingFunction(req.jwtToken);
+    // if (decodedToken && decodedToken.externalId !== externalUserId) {
+    //    return res.status(403).json({ error: "Forbidden to access chats for another user." });
+    // }
+
     const result = await CC.get_chats_for_external_user(externalUserId, dbInstance, req.jwtToken);
     res.status(result[0]).json(result[1]);
 });
 
-// --- Error Handling Middleware ---
-app.use(routeNotFoundHandler); // Handles 404s for undefined routes
-app.use(globalErrorHandler); // Handles all other errors
+app.use(routeNotFoundHandler);
+app.use(globalErrorHandler);
 
-// --- Server Start ---
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));
 
-// --- Graceful Shutdown ---
 process.on('SIGINT', async () => {
   console.log('SIGINT received. Shutting down gracefully...');
   

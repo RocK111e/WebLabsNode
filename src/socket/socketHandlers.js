@@ -1,15 +1,26 @@
 // src/socket/socketHandlers.js
-const mongoose = require('mongoose'); // For mongoose.Types.ObjectId.isValid
-const { fetchUserDetails } = require('../utils/externalUserApi'); // Used by socket handlers
+const mongoose = require('mongoose');
+const { fetchUserDetails } = require('../utils/externalUserApi');
 
 function initializeSocketIO(io, dbInstance) {
   io.on('connection', (socket) => {
     console.log(`Socket connected: ${socket.id}`);
     const jwtTokenFromHandshake = socket.handshake.auth.token;
+    const externalUserIdFromHandshake = socket.handshake.auth.externalUserId; // EXPECTING THIS FROM CLIENT
+
     if (!jwtTokenFromHandshake) {
       console.warn(`Socket ${socket.id} connected without JWT. Some features might be restricted.`);
     }
-    socket.jwtToken = jwtTokenFromHandshake; // Store token for use in event handlers
+    socket.jwtToken = jwtTokenFromHandshake;
+
+    if (externalUserIdFromHandshake) {
+      socket.externalUserId = externalUserIdFromHandshake; // Store it on the socket
+      const userSpecificRoom = `user_${externalUserIdFromHandshake}`;
+      socket.join(userSpecificRoom);
+      console.log(`Socket ${socket.id} for user ${externalUserIdFromHandshake} joined room ${userSpecificRoom}`);
+    } else {
+      console.warn(`Socket ${socket.id} connected without externalUserId. User-specific notifications will not work for this socket.`);
+    }
 
     socket.on('joinChat', (chatId) => {
       if (chatId && typeof chatId === 'string' && mongoose.Types.ObjectId.isValid(chatId)) {
@@ -47,6 +58,12 @@ function initializeSocketIO(io, dbInstance) {
           socket.emit('messageError', { chatId, error: 'Invalid message data. All fields (chatId, senderExternalId, message) are required and message cannot be empty.' });
           return;
       }
+      // Ensure senderExternalId from data matches the authenticated user on the socket
+      if (socket.externalUserId && senderExternalId !== socket.externalUserId) {
+        console.warn(`Socket ${socket.id} sendMessage: senderExternalId ${senderExternalId} in message data does not match authenticated user ${socket.externalUserId}.`);
+        socket.emit('messageError', { chatId, error: 'Sender ID mismatch with authenticated user.' });
+        return;
+      }
 
       try {
         const userDetails = await fetchUserDetails(senderExternalId, tokenForPHP);
@@ -55,8 +72,37 @@ function initializeSocketIO(io, dbInstance) {
         const result = await dbInstance.post_message(chatId, senderExternalId, senderUsername, message.trim());
         
         if (result.success && result.data) {
-          io.to(chatId).emit('newMessage', result.data); // Broadcast to all in room, including sender
-          console.log(`Message sent by ${socket.id} to room ${chatId}:`, result.data.message);
+          const savedMessage = result.data;
+          io.to(chatId.toString()).emit('newMessage', savedMessage); // Broadcast to all in chat room
+          console.log(`Message sent by ${socket.id} to room ${chatId}:`, savedMessage.message);
+
+          // --- Notification Logic ---
+          const chatDetails = await dbInstance.getChatById(chatId.toString());
+          if (chatDetails.success && chatDetails.data) {
+            const participants = chatDetails.data.participantExternalIds || [];
+            const chatName = chatDetails.data.chatName || (participants.length === 2 ? `Chat with ${senderUsername}` : "Group Chat"); // Basic naming for 1-on-1
+            
+            participants.forEach(participantId => {
+              if (participantId.toString() !== senderExternalId.toString()) { // Don't notify the sender
+                const userSpecificRoom = `user_${participantId}`;
+                const notificationData = {
+                  chatId: chatId.toString(),
+                  chatName: chatName,
+                  senderExternalId: senderExternalId.toString(),
+                  senderName: senderUsername,
+                  messageSnippet: savedMessage.message.substring(0, 50) + (savedMessage.message.length > 50 ? '...' : ''),
+                  timestamp: savedMessage.createdAt,
+                  isGroupChat: chatDetails.data.isGroupChat,
+                };
+                io.to(userSpecificRoom).emit('newMessageNotification', notificationData);
+                console.log(`Sent notification to ${userSpecificRoom} for message in chat ${chatId}`);
+              }
+            });
+          } else {
+            console.warn(`Could not fetch chat details for ${chatId} to send notifications. Error: ${chatDetails.error}`);
+          }
+          // --- End Notification Logic ---
+
         } else {
           console.error(`Socket ${socket.id} sendMessage: Failed to save message for chat ${chatId}. Error: ${result.error}`);
           socket.emit('messageError', { chatId, error: result.error || 'Failed to save message.' });
@@ -79,6 +125,10 @@ function initializeSocketIO(io, dbInstance) {
           console.warn(`Socket ${socket.id} typing: Invalid or missing externalUserId for chat ${chatId}.`);
           return;
       }
+      if (socket.externalUserId && externalUserId !== socket.externalUserId) {
+        console.warn(`Socket ${socket.id} typing: externalUserId ${externalUserId} in typing data does not match authenticated user ${socket.externalUserId}. Ignoring.`);
+        return;
+      }
 
       if (!tokenForPHP && externalUserId) { 
           console.warn(`Socket ${socket.id} typing: Missing JWT for user ${externalUserId} in chat ${chatId}. User details might be incomplete.`);
@@ -94,17 +144,20 @@ function initializeSocketIO(io, dbInstance) {
           } else if (data.username) { 
               usernameToDisplay = data.username;
           }
-          socket.to(chatId).emit('userTyping', { username: usernameToDisplay, isTyping, chatId, externalUserId });
+          socket.to(chatId.toString()).emit('userTyping', { username: usernameToDisplay, isTyping, chatId: chatId.toString(), externalUserId });
       } catch (error) {
           console.error(`Socket ${socket.id} typing: Error fetching user details for ${externalUserId} in chat ${chatId}. Error: ${error.message}`);
           const fallbackUsername = `User (${externalUserId ? externalUserId.substring(0,4) : 'Unknown'})`;
-          socket.to(chatId).emit('userTyping', { username: fallbackUsername, isTyping, chatId, externalUserId });
+          socket.to(chatId.toString()).emit('userTyping', { username: fallbackUsername, isTyping, chatId: chatId.toString(), externalUserId });
       }
     });
 
     socket.on('disconnect', (reason) => {
       console.log(`Socket disconnected: ${socket.id}. Reason: ${reason}`);
-      // Add any cleanup logic here if needed
+      if (socket.externalUserId) {
+        const userSpecificRoom = `user_${socket.externalUserId}`;
+        console.log(`Socket ${socket.id} for user ${socket.externalUserId} from room ${userSpecificRoom} disconnected.`);
+      }
     });
 
     socket.on('error', (error) => {
