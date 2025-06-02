@@ -37,7 +37,7 @@ class MongoDB {
     try {
       const newChat = await Chat.create({
         chatName,
-        userIds,
+        userIds: userIds,
         messages: []
       });
       console.log('Chat created:', newChat);
