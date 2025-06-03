@@ -1,5 +1,5 @@
 const mongoose = require('mongoose');
-const { Message, Chat } = require('./chatSchema'); // Adjust path to your schema file
+const { Message, Chat } = require('./schemas'); // Fixed import path
 
 class MongoDB {
   constructor() {
