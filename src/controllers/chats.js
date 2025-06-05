@@ -5,6 +5,7 @@ class ChatsController {
 
   async getChats(query, DB, res) {
     const userId = query.UserId;
+    console.log(`Fetching chats for user ID: ${userId}`);
     try {
       const chats = await DB.get_user_chats(userId);
       res.status(200).json(chats);
@@ -16,7 +17,7 @@ class ChatsController {
   async createChat(body, DB, res) {
     const userIds = body.UserIds;
     const chatName = body.chatName;
-    console.log(`New chat data ${chatName} with ${userIds}`);
+    console.log(`Creating new chat "${chatName}" with users:`, userIds);
 
     try {
       const chat = await DB.create_chat(chatName, userIds);
@@ -32,11 +33,19 @@ class ChatsController {
 
   async getChatMessages(body, DB, res) {
     const chatId = body.chatId;
+    console.log(`Fetching messages for chat ID: ${chatId}`);
+
+    if (!chatId || chatId === "undefined") {
+      console.error('Invalid chat ID received:', chatId);
+      res.status(400).json({ error: 'Chat ID is required' });
+      return;
+    }
 
     try {
       const messages = await DB.get_chat_messages(chatId);
       res.status(200).json(messages);
     } catch (error) {
+      console.error(`Error fetching messages for chat ${chatId}:`, error.message);
       res.status(500).json({ error: error.message || 'Failed to retrieve chat messages' });
     }
   }
