@@ -1,20 +1,62 @@
 const express = require('express');
 const cors = require('cors');
+const { createServer } = require('http');
+const { Server } = require('socket.io');
 const MongoDB = require('./src/database/database');
 const MessageController = require('./src/controllers/messages');
 const ChatsController = require('./src/controllers/chats');
+const setupSocketIO = require('./src/sockets/sockets');
 require('./src/logger/logger'); // Import logger to apply console overrides
 
 const app = express();
 app.use(express.json()); // Add middleware to parse JSON bodies
 
 const corsOptions = {
-  origin: '*',
+  origin: [
+    "http://webnode.local:3000",
+    "http://webnode.local",
+    "http://weblabs.local:3000",
+    "http://weblabs.local",
+    "http://localhost:3000"
+  ],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: '*',
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true
 };
 
 app.use(cors(corsOptions));
+
+// Create HTTP server and Socket.IO instance
+const httpServer = createServer(app);
+const io = new Server(httpServer, {
+  cors: {
+    origin: [
+      "http://webnode.local",
+      "http://weblabs.local",
+      "http://localhost:3000"
+    ],
+    methods: ["GET", "POST", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+    credentials: true
+  },
+  transports: ['websocket', 'polling'],
+  path: '/socket.io/',
+  pingTimeout: 60000,
+  pingInterval: 25000,
+  cookie: false
+});
+
+// Debug Socket.IO connection issues
+io.engine.on("connection_error", (err) => {
+  console.log("Connection error:");
+  console.log(err.req);      // the request object
+  console.log(err.code);     // the error code, for example 1
+  console.log(err.message);  // the error message, for example "Session ID unknown"
+  console.log(err.context);  // some additional error context
+});
+
+// Setup Socket.IO handlers
+setupSocketIO(io);
 
 app.get('/', (req, res) => {
   console.log('Request received at /');
@@ -71,6 +113,7 @@ app.use((req, res, next) => {
 });
 
 const PORT = 3000;
-app.listen(PORT, () => {
+httpServer.listen(PORT, '0.0.0.0', () => {
   console.log(`Server running at http://localhost:${PORT}/`);
+  console.log('Allowed origins:', corsOptions.origin);
 });
