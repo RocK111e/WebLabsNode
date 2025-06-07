@@ -29,31 +29,12 @@ app.use(cors(corsOptions));
 // Create HTTP server and Socket.IO instance
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
-  cors: {
-    origin: [
-      "http://webnode.local",
-      "http://weblabs.local",
-      "http://localhost:3000"
-    ],
-    methods: ["GET", "POST", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
-    credentials: true
-  },
-  transports: ['websocket', 'polling'],
-  path: '/socket.io/',
-  pingTimeout: 60000,
-  pingInterval: 25000,
-  cookie: false
+  cors: corsOptions,
+  transports: ['websocket', 'polling']
 });
 
-// Debug Socket.IO connection issues
-io.engine.on("connection_error", (err) => {
-  console.log("Connection error:");
-  console.log(err.req);      // the request object
-  console.log(err.code);     // the error code, for example 1
-  console.log(err.message);  // the error message, for example "Session ID unknown"
-  console.log(err.context);  // some additional error context
-});
+// Create ChatsController instance
+const chatsController = new ChatsController();
 
 // Setup Socket.IO handlers
 setupSocketIO(io);
@@ -83,8 +64,7 @@ app.get('/chats', async (req, res) => {
     console.log('Request received at /chats');
     
     const DB = new MongoDB();
-    const CC = new ChatsController();
-    await CC.getChats(req.query, DB, res);
+    await chatsController.getChats(req.query, DB, res);
 });
 
 // Get messages for specific chat
@@ -92,9 +72,8 @@ app.get('/chats/:chatId/messages', async (req, res) => {
     console.log('Request received at /chats/:chatId/messages');
     
     const DB = new MongoDB();
-    const CC = new ChatsController();
     const body = { chatId: req.params.chatId };
-    await CC.getChatMessages(body, DB, res);
+    await chatsController.getChatMessages(body, DB, res);
 });
 
 // Create new chat
@@ -102,8 +81,7 @@ app.post('/chats', async (req, res) => {
     console.log('Request received at /chats');
     
     const DB = new MongoDB();
-    const CC = new ChatsController();
-    await CC.createChat(req.body, DB, res);
+    await chatsController.createChat(req.body, DB, res);
 });
 
 app.use((req, res, next) => {

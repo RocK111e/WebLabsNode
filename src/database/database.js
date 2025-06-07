@@ -16,6 +16,22 @@ class MongoDB {
     }
   };
 
+  // Get chat by ID
+  async get_chat_by_id(chatId) {
+    try {
+      const chat = await Chat.findById(chatId);
+      if (!chat) {
+        console.error('Chat not found');
+        return null;
+      }
+      console.log('Retrieved chat:', chat);
+      return chat;
+    } catch (err) {
+      console.error('Error retrieving chat:', err.message);
+      return null;
+    }
+  }
+
   // Create and save a new message
   async post_message(username, message, userId) {
     try {
