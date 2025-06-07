@@ -151,6 +151,26 @@ class MongoDB {
       return null;
     }
   }
+
+  // Add users to chat
+  async add_users_to_chat(chatId, userIds) {
+    try {
+      const chat = await Chat.findByIdAndUpdate(
+        chatId,
+        { $addToSet: { userIds: { $each: userIds } } },
+        { new: true }
+      );
+      if (!chat) {
+        console.error('Chat not found');
+        return null;
+      }
+      console.log('Users added to chat:', chat);
+      return chat;
+    } catch (err) {
+      console.error('Error adding users to chat:', err.message);
+      return null;
+    }
+  }
 }
 
 module.exports = MongoDB;

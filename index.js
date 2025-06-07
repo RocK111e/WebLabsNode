@@ -76,6 +76,14 @@ app.get('/chats/:chatId/messages', async (req, res) => {
     await chatsController.getChatMessages(body, DB, res);
 });
 
+// Add users to chat
+app.post('/chats/:chatId/users', async (req, res) => {
+    console.log('Request received at /chats/:chatId/users');
+    
+    const DB = new MongoDB();
+    await chatsController.addUsersToChat(req, DB, res);
+});
+
 // Create new chat
 app.post('/chats', async (req, res) => {
     console.log('Request received at /chats');
